@@ -1,37 +1,35 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail  # Safer bash options
 
 ### CONFIG
 REPO_URL="https://github.com/zorp-corp/nockchain"
 PROJECT_DIR="$HOME/nockchain"
 PUBKEY="3LJM1jSAYMfUHg31zMVTWnFsNTbGenRZwVZgJzArfE2SyA2V4eJzz46vLguyK19RTbr5okQwG13RNXyjkPh2oWMeuXcDhGjyVPKbTEv9dDRtx742B53YZqvpeHpbASDRWa8P"
-LEADER_PORT=3005
-FOLLOWER_PORT=3006
-LEADER_SOCK="leader.sock"
-FOLLOWER_SOCK="follower.sock"
-LEADER_DATA=".data.leader"
-FOLLOWER_DATA=".data.follower"
+ENV_FILE="$PROJECT_DIR/.env"
+MAKEFILE="$PROJECT_DIR/Makefile"
+TMUX_SESSION="nock-miner"
 
 echo ""
-echo "[+] Nockchain DevNet Bootstrap Starting..."
+echo "[!] Purging all files in current working directory..."
+rm -rf *
+sleep 10  # Safety pause
+echo "[✔] Directory cleaned. Continuing..."
+echo ""
+
+echo "[+] Nockchain MainNet Bootstrap Starting..."
 echo "-------------------------------------------"
 
+
 ### 1. Install Rust Toolchain
-echo "[1/6] Installing Rust..."
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-# Add Rust to PATH
-export PATH="$HOME/.cargo/bin:$PATH"
-
-# Confirm cargo installed
-if ! command -v cargo &> /dev/null; then
-  echo "❌ Rust install failed. Aborting."
-  exit 1
+echo "[1/7] Installing Rust toolchain..."
+if ! command -v cargo &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-### 2. Install dependencies
-echo "[2/6] Installing dependencies..."
+### 2. Install System Dependencies
+echo "[2/7] Installing system dependencies..."
 sudo apt update && sudo apt install -y \
   git \
   make \
@@ -41,54 +39,49 @@ sudo apt update && sudo apt install -y \
   libclang-dev \
   tmux
 
-### 3. Clone repo
-echo "[3/6] Cloning Nockchain repo..."
+### 3. Clone Repo & Pull Latest
+echo "[3/7] Cloning or updating Nockchain repo..."
 if [ ! -d "$PROJECT_DIR" ]; then
-  git clone "$REPO_URL" "$PROJECT_DIR"
+  git clone --depth 1 --branch master "$REPO_URL" "$PROJECT_DIR"
 else
-  echo "    Repo already exists. Pulling latest..."
   cd "$PROJECT_DIR"
-  git pull origin main
+  git reset --hard HEAD && git pull origin master
 fi
 cd "$PROJECT_DIR"
 
-### 4. Install Hoon Compiler (hoonc)
-echo "[4/6] Installing Hoon Compiler (hoonc)..."
+### 4. Create or update .env
+echo "[4/7] Setting pubkey in .env..."
+cp -f .env_example .env
+sed -i "s|^MINING_PUBKEY=.*|MINING_PUBKEY=$PUBKEY|" "$ENV_FILE"
+grep "MINING_PUBKEY" "$ENV_FILE"
+
+### 5. Update Makefile with pubkey (if line exists)
+echo "[5/7] Patching Makefile with pubkey..."
+if grep -q "^export MINING_PUBKEY" "$MAKEFILE"; then
+  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY := $PUBKEY|" "$MAKEFILE"
+else
+  echo "export MINING_PUBKEY := $PUBKEY" >> "$MAKEFILE"
+fi
+grep "MINING_PUBKEY" "$MAKEFILE"
+
+### 6. Build Everything
+echo "[6/7] Building Nockchain..."
 make install-hoonc
-
-### 5. Build project
-echo "[5/6] Building Nockchain project..."
-make build-hoon-all
 make build
+make install-nockchain
+make install-nockchain-wallet
 
-### 5.5 Inject MINING_PUBKEY into Makefile
-echo "[5.5] Forcing MINING_PUBKEY update into Makefile"
-sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY := $PUBKEY|" "$PROJECT_DIR/Makefile"
-grep "MINING_PUBKEY" "$PROJECT_DIR/Makefile"
+### 7. Clean previous node data
+echo "[7/7] Cleaning old data directory..."
+rm -rf "$PROJECT_DIR/.data.nockchain"
 
-### 6. Launch Leader & Follower in tmux
-echo "[6/6] Launching Nockchain Leader & Follower in tmux..."
-
-# Kill existing tmux sessions if they exist
-tmux kill-session -t nock-leader 2>/dev/null || true
-tmux kill-session -t nock-follower 2>/dev/null || true
-
-# Clean sockets & data
-rm -f "$PROJECT_DIR/$LEADER_SOCK" "$PROJECT_DIR/$FOLLOWER_SOCK"
-rm -rf "$PROJECT_DIR/$LEADER_DATA" "$PROJECT_DIR/$FOLLOWER_DATA"
-
-# Start Leader node
-tmux new-session -d -s nock-leader "cd $PROJECT_DIR && make run-nockchain-leader"
-
-# Wait for leader to initialize
-sleep 6
-
-# Start Follower node
-tmux new-session -d -s nock-follower "cd $PROJECT_DIR && make run-nockchain-follower"
+### 8. Start Miner using CLI pubkey
+echo "[8/8] Launching miner in tmux with your pubkey..."
+tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+tmux new-session -d -s "$TMUX_SESSION" "cd $PROJECT_DIR && nockchain --mining-pubkey $PUBKEY --mine | tee -a miner.log"
 
 echo ""
-echo "✅ Nockchain DevNet Miner launched successfully."
-echo "   - tmux attach -t nock-leader"
-echo "   - tmux attach -t nock-follower"
-echo "   - Wallet PubKey: $PUBKEY"
+echo "✅ Nockchain MainNet Miner launched successfully!"
+echo "   - To view miner logs: tmux attach -t $TMUX_SESSION"
+echo "   - Wallet PubKey (used + saved): $PUBKEY"
 echo ""
