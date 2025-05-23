@@ -5,7 +5,7 @@ set -euo pipefail  # Safer bash options
 ### CONFIG
 REPO_URL="https://github.com/zorp-corp/nockchain"
 PROJECT_DIR="$HOME/nockchain"
-PUBKEY="3LJM1jSAYMfUHg31zMVTWnFsNTbGenRZwVZgJzArfE2SyA2V4eJzz46vLguyK19RTbr5okQwG13RNXyjkPh2oWMeuXcDhGjyVPKbTEv9dDRtx742B53YZqvpeHpbASDRWa8P"
+PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
 ENV_FILE="$PROJECT_DIR/.env"
 MAKEFILE="$PROJECT_DIR/Makefile"
 TMUX_SESSION="nock-miner"
