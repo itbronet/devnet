@@ -87,3 +87,13 @@ echo "✅ Nockchain MainNet Miner launched successfully!"
 echo "   - To view miner logs: tmux attach -t $TMUX_SESSION"
 echo "   - Wallet PubKey (used + saved): $PUBKEY"
 echo ""
+
+send_email() {
+  local subject="$1"
+  local message="$2"
+  echo -e "$message" | mail -s "$subject" itbronet@gmail.com
+}
+
+# Send success email
+send_email "✅ Nockchain Miner Launched" "Miner started successfully on $(hostname).\nPubKey: $PUBKEY\nTime: $(date)"
+trap 'send_email "❌ Nockchain Setup Failed" "The setup script encountered an error on $(hostname) at $(date). Please check the logs for details."' ERR
