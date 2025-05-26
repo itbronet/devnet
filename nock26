@@ -5,55 +5,80 @@ set -euo pipefail
 ### CONFIG
 REPO_URL="https://github.com/zorp-corp/nockchain"
 PROJECT_DIR="$HOME/nockchain"
-WALLET_DIR="$PROJECT_DIR/wallet"
-KEY_FILE="$WALLET_DIR/my_wallet.key"
 ENV_FILE="$PROJECT_DIR/.env"
 MAKEFILE="$PROJECT_DIR/Makefile"
+WALLET_DIR="$HOME/.nockchain-wallet"
 TMUX_SESSION="nock-miner"
 EMAIL="itbronet@gmail.com"
 
-send_email() {
-  local subject="$1"
-  local message="$2"
-  echo -e "$message" | mail -s "$subject" "$EMAIL"
-}
-
-trap 'send_email "❌ Nockchain Setup Failed" "Setup failed on $(hostname) at $(date). Check logs."' ERR
-
+### Cleanup
 echo ""
-echo "[!] Purging all files in current working directory..."
-rm -rf *
+echo "[!] Cleaning working directory (except script itself)..."
+find . -maxdepth 1 ! -name "$(basename "$0")" ! -name '.' -exec rm -rf {} +
 sleep 5
 echo "[✔] Directory cleaned."
 echo ""
 
-echo "[+] Starting Nockchain Setup..."
-echo "-------------------------------"
-
-### 1. Install Rust
+### 1. Rust Toolchain
 echo "[1/9] Installing Rust toolchain..."
 if ! command -v cargo &>/dev/null; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  export PATH="$HOME/.cargo/bin:$PATH"
+  source "$HOME/.cargo/env"
 fi
 
-### 2. System Dependencies
-echo "[2/9] Installing system packages..."
+### 2. Dependencies
+echo "[2/9] Installing dependencies..."
 sudo apt update && sudo apt install -y \
   git make build-essential clang llvm-dev libclang-dev tmux mailutils
 
 ### 3. Clone or Update Repo
-echo "[3/9] Cloning or updating repo..."
+echo "[3/9] Cloning/updating Nockchain repo..."
 if [ ! -d "$PROJECT_DIR" ]; then
-  git clone --depth 1 --branch master "$REPO_URL" "$PROJECT_DIR"
+  git clone --depth 1 "$REPO_URL" "$PROJECT_DIR"
 else
   cd "$PROJECT_DIR"
-  git reset --hard HEAD && git pull origin master
+  git reset --hard HEAD
+  git pull origin master
 fi
 cd "$PROJECT_DIR"
 
-### 4. Build Nockchain
-echo "[4/9] Building Nockchain components..."
+### 4. Setup wallet with existing keys
+echo "[4/9] Using existing keys..."
+
+PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
+PRIVKEY="5XujP153GmiGiQZHhzyRUrnQ7wkzRVcVcyhrnptgv1Cr"
+
+rm -rf "$WALLET_DIR"
+mkdir -p "$WALLET_DIR"
+
+# Save keys in wallet directory in a JSON format expected by wallet (adjust if needed)
+cat > "$WALLET_DIR/keys.json" <<EOF
+{
+  "pubkey": "$PUBKEY",
+  "privkey": "$PRIVKEY"
+}
+EOF
+
+echo "✅ Using Public Key: $PUBKEY"
+
+
+### 5. Write .env file
+echo "[5/9] Writing .env file..."
+cp -f "$PROJECT_DIR/.env_example" "$ENV_FILE"
+sed -i "s|^MINING_PUBKEY=.*|MINING_PUBKEY=$PUBKEY|" "$ENV_FILE"
+echo "MINING_PUBKEY=$PUBKEY"
+
+### 6. Patch Makefile if needed
+echo "[6/9] Ensuring pubkey is in Makefile..."
+if grep -q "^export MINING_PUBKEY" "$MAKEFILE"; then
+  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY := $PUBKEY|" "$MAKEFILE"
+else
+  echo "export MINING_PUBKEY := $PUBKEY" >> "$MAKEFILE"
+fi
+
+### 7. Build
+echo "[7/9] Building Nockchain..."
+cd "$PROJECT_DIR"
 make install-hoonc
 make build
 make install-nockchain
@@ -61,50 +86,16 @@ make install-nockchain-wallet
 make install-nockchain-miner
 make install-nockchain-verifier
 
-### 5. Wallet Setup
-echo "[5/9] Setting up wallet..."
-mkdir -p "$WALLET_DIR"
-cd "$WALLET_DIR"
-
-if [ ! -f "$KEY_FILE" ]; then
-  echo "🔐 Generating wallet keypair..."
-  nockchain-wallet keygen > "$KEY_FILE"
-  echo "[✔] Wallet key saved to $KEY_FILE"
-else
-  echo "🔐 Wallet key already exists at $KEY_FILE"
-fi
-
-PUBKEY=$(grep "pubkey:" "$KEY_FILE" | awk '{print $2}')
-echo "[✔] Extracted wallet pubkey: $PUBKEY"
-cd "$PROJECT_DIR"
-
-### 6. Configure .env and Makefile
-echo "[6/9] Updating environment configs..."
-cp -f .env_example "$ENV_FILE"
-sed -i "s|^MINING_PUBKEY=.*|MINING_PUBKEY=$PUBKEY|" "$ENV_FILE"
-grep "MINING_PUBKEY" "$ENV_FILE"
-
-if grep -q "^export MINING_PUBKEY" "$MAKEFILE"; then
-  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY := $PUBKEY|" "$MAKEFILE"
-else
-  echo "export MINING_PUBKEY := $PUBKEY" >> "$MAKEFILE"
-fi
-grep "MINING_PUBKEY" "$MAKEFILE"
-
-### 7. Clean Old Chain Data
-echo "[7/9] Cleaning previous chain data..."
-rm -rf "$PROJECT_DIR/.data.nockchain"
-
-### 8. Start Miner
-echo "[8/9] Launching miner in tmux..."
+### 8. Launch Miner
+echo "[8/9] Launching miner..."
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$TMUX_SESSION" "cd $PROJECT_DIR && nockchain-miner --mining-pubkey $PUBKEY | tee -a miner.log"
 
 ### 9. Notify
-echo "[9/9] Setup complete. Sending confirmation email..."
-send_email "✅ Nockchain Miner Started" \
-"Miner successfully launched on $(hostname).\n\nPublic Key: $PUBKEY\nTime: $(date)\nTo view logs: tmux attach -t $TMUX_SESSION"
+echo "[9/9] Sending success email..."
+echo -e "✅ Nockchain Miner started successfully on $(hostname).\nPublic Key: $PUBKEY\nTime: $(date)" | mail -s "✅ Nockchain Miner Launched" "$EMAIL"
 
 echo ""
-echo "✅ Miner running with pubkey: $PUBKEY"
-echo "📬 Email notification sent to: $EMAIL"
+echo "🎉 Setup complete!"
+echo "👉 To monitor miner: tmux attach -t $TMUX_SESSION"
+echo "👉 Public Key used: $PUBKEY"
