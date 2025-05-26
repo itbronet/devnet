@@ -1,6 +1,9 @@
 #!/bin/bash
 
-set -euo pipe
+set -e
+set -u
+set -o pipefail
+
 
 # --- Configuration ---
 REPO_URL="https://github.com/zorp-corp/nockchain"
