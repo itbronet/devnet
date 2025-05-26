@@ -53,9 +53,16 @@ echo "[✔] .jam files created."
 # --- Step 4: Optional Git commit ---
 cd "$PROJECT_DIR"
 if git rev-parse --is-inside-work-tree &>/dev/null; then
-    git add assets/*.jam
+    # Unignore .jam if needed
+    GITIGNORE="$PROJECT_DIR/.gitignore"
+    if grep -q '\.jam' "$GITIGNORE"; then
+        echo "[🔧] Removing .jam ignore rule from .gitignore"
+        sed -i '/\.jam/d' "$GITIGNORE"
+    fi
+
+    git add -f assets/*.jam
     git commit -m "Add dummy kernel .jam files" || echo "ℹ️ No changes to commit."
-    git push origin main || echo "⚠️ Git push failed (check branch name)"
+    git push origin main || git push origin master || echo "⚠️ Git push failed (check branch)"
 fi
 
 # --- Step 5: Build ---
