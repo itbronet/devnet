@@ -12,7 +12,7 @@ LOG_FILE="$PROJECT_DIR/miner.log"
 
 # GitHub Commit Config
 GITHUB_REPO="https://github.com/itbronet/devnet"
-TARGET_BRANCH="main"
+TARGET_BRANCH=$(git remote show origin | awk '/HEAD branch/ {print $NF}')
 COMMIT_MESSAGE="Auto-added .jam kernel files"
 GIT_USER="bronetsystem"
 GIT_EMAIL="itbronet@gmail.com"
