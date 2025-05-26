@@ -7,16 +7,36 @@ TMUX_SESSION="nockminer"
 PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
 LOG_FILE="$HOME/nockchain/miner.log"
 
-# --- Update system and install dependencies ---
-sudo apt update && sudo apt install -y build-essential curl git tmux mailutils jq
+### Cleanup
+echo ""
+echo "[!] Cleaning working directory (except script itself)..."
+find . -maxdepth 1 ! -name "$(basename "$0")" ! -name '.' -exec rm -rf {} +
+sleep 5
+echo "[✔] Directory cleaned."
+echo ""
 
-# --- Install Rust if not present ---
-if ! command -v cargo &> /dev/null; then
-    echo "Installing Rust..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
+### 1. Rust Toolchain
+echo "[1/9] Installing Rust toolchain..."
+if ! command -v cargo &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source "$HOME/.cargo/env"
 fi
 
+### 2. Install System Dependencies
+echo "[2/7] Installing system dependencies..."
+
+sudo apt-get update
+
+sudo apt-get install -y \
+  git \
+  make \
+  build-essential \
+  clang \
+  llvm-dev \
+  libclang-dev \
+  tmux \
+  postfix \
+  
 # --- Clone or update repository ---
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "Cloning Nockchain repo..."
