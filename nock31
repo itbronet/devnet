@@ -1,0 +1,67 @@
+#!/bin/bash
+
+set -e
+
+# Configuration
+REPO_URL="https://github.com/itbronet/devnet.git"
+CLONE_DIR="$HOME/nockchain"
+TMUX_SESSION="nockminer"
+PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
+LOG_FILE="$HOME/nockchain/miner.log"
+
+echo "[1/9] Cleaning previous Nockchain setup..."
+rm -rf "$CLONE_DIR"
+mkdir -p "$CLONE_DIR"
+
+echo "[2/9] Installing Rust toolchain..."
+if ! command -v cargo &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source "$HOME/.cargo/env"
+fi
+
+echo "[3/9] Installing system dependencies..."
+sudo apt-get update -y
+sudo apt-get install -y git make build-essential clang llvm-dev libclang-dev tmux
+
+echo "[4/9] Cloning Nockchain repository..."
+git clone "$REPO_URL" "$CLONE_DIR"
+cd "$CLONE_DIR"
+
+echo "[5/9] Verifying assets..."
+for f in wal.jam miner.jam dumb.jam; do
+  if [ ! -f "assets/$f" ]; then
+    echo "Error: Missing required asset: $f"
+    exit 1
+  fi
+done
+echo "[✔] All required .jam assets are present."
+
+echo "[6/9] Building the Nockchain project..."
+cargo build --release
+
+if [ ! -f "$CLONE_DIR/target/release/nockchain" ]; then
+    echo "Error: nockchain binary not found after build."
+    exit 1
+fi
+
+if [ ! -f "$CLONE_DIR/target/release/nockcli" ]; then
+    echo "Error: nockcli binary not found after build."
+    exit 1
+fi
+
+echo "[7/9] Killing previous tmux session (if any)..."
+tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+
+echo "[8/9] Launching miner in tmux..."
+tmux new-session -d -s "$TMUX_SESSION" "cd $CLONE_DIR && ./target/release/nockchain --mine --mining-pubkey $PUBKEY | tee -a $LOG_FILE"
+
+sleep 5
+
+echo "[9/9] Checking wallet balance..."
+BALANCE=$("$CLONE_DIR/target/release/nockcli" wallet balance 2>/dev/null)
+echo "Wallet Balance: $BALANCE"
+echo "$(date): Wallet Balance: $BALANCE" >> "$LOG_FILE"
+
+echo "🎉 Setup complete!"
+echo "👉 To monitor miner output: tmux attach -t $TMUX_SESSION"
+echo "👉 Public Key used: $PUBKEY"
