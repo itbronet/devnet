@@ -1,0 +1,98 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Configuration
+device="$(uname -m)"
+repo="zorp-corp/nockchain"
+binary_name="nockchaind"
+binary_path="$HOME/.local/bin/$binary_name"
+version="latest"
+data_dir="$HOME/.nock"
+assets_dir="$HOME/nockchain/assets"
+
+# Ensure .local/bin exists and is in PATH
+mkdir -p "$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$PATH"
+
+# Detect the latest release and architecture
+arch="$(uname -m)"
+case "$arch" in
+    x86_64)
+        arch="amd64"
+        ;;
+    aarch64)
+        arch="arm64"
+        ;;
+    *)
+        echo "Unsupported architecture: $arch"
+        exit 1
+        ;;
+esac
+
+# Download the binary
+latest_url="https://github.com/$repo/releases/latest/download/$binary_name-linux-$arch"
+echo "Downloading $binary_name from $latest_url..."
+curl -L "$latest_url" -o "$binary_path"
+chmod +x "$binary_path"
+
+echo "$binary_name has been installed to $binary_path"
+
+# Setup dummy .jam files if not present
+mkdir -p "$assets_dir"
+
+if [ ! -f "$assets_dir/wal.jam" ]; then
+  echo "Creating dummy wal.jam..."
+  echo '[ %wallet [%version 1] [%keys [%pub "35TRFiY..."] [%priv ""]] [%balance 0] ]' > "$assets_dir/wal.jam"
+fi
+
+if [ ! -f "$assets_dir/miner.jam" ]; then
+  echo "Creating dummy miner.jam..."
+  cat <<EOF > "$assets_dir/miner.jam"
+[ %miner
+  [%version 1]
+  [%core
+    [%mine-fn
+      [%sample ~]
+      [%result [%ok "dummy-block-mined"]]
+    ]
+  ]
+]
+EOF
+fi
+
+if [ ! -f "$assets_dir/dumb.jam" ]; then
+  echo "Creating dummy dumb.jam..."
+  cat <<EOF > "$assets_dir/dumb.jam"
+[ %dumb
+  [%version 1]
+  [%core
+    [%noop
+      [%result "noop-done"]
+    ]
+  ]
+]
+EOF
+fi
+
+# Verify .jam files exist
+missing_files=()
+for file in wal.jam miner.jam dumb.jam; do
+  if [ ! -f "$assets_dir/$file" ]; then
+    missing_files+=("$file")
+  fi
+done
+
+if [ ${#missing_files[@]} -ne 0 ]; then
+  echo "Error: Missing required asset(s): ${missing_files[*]}"
+  exit 1
+fi
+
+# Initialize configuration if needed
+if [ ! -f "$data_dir/config.toml" ]; then
+    echo "Initializing $binary_name..."
+    "$binary_name" init
+fi
+
+# Start the node
+exec "$binary_name" start
