@@ -3,12 +3,12 @@
 set -euo pipefail
 
 # --- Configuration ---
-REPO_URL="https://github.com/itbronet/devnet.git"
+REPO_URL="https://github.com/zorp-corp/nockchain"
 REPO_DIR="$HOME/nockchain"
 ASSETS_DIR="$REPO_DIR/assets"
 BRANCH="main"
 TMUX_SESSION="nockminer"
-PUBKEY="your-existing-pubkey-here" # <- replace with your real pubkey
+PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
 
 echo "[1/8] Cloning or updating repository..."
 if [ -d "$REPO_DIR" ]; then
