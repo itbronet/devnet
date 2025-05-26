@@ -1,0 +1,126 @@
+#!/bin/bash
+
+set -euo pipefail
+
+### CONFIG
+REPO_URL="https://github.com/zorp-corp/nockchain"
+PROJECT_DIR="$HOME/nockchain"
+ENV_FILE="$PROJECT_DIR/.env"
+MAKEFILE="$PROJECT_DIR/Makefile"
+WALLET_DIR="$HOME/.nockchain-wallet"
+TMUX_SESSION="nock-miner"
+EMAIL="itbronet@gmail.com"
+
+### Cleanup
+echo ""
+echo "[!] Cleaning working directory (except script itself)..."
+find . -maxdepth 1 ! -name "$(basename "$0")" ! -name '.' -exec rm -rf {} +
+sleep 5
+echo "[✔] Directory cleaned."
+echo ""
+
+### 1. Rust Toolchain
+echo "[1/9] Installing Rust toolchain..."
+if ! command -v cargo &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source "$HOME/.cargo/env"
+fi
+
+### 2. Install System Dependencies
+echo "[2/7] Installing system dependencies..."
+
+sudo apt-get update
+
+# Preseed postfix answers to skip interactive prompt
+sudo debconf-set-selections <<EOF
+postfix postfix/main_mailer_type select Internet Site
+postfix postfix/mailname string $(hostname -f)
+EOF
+
+sudo apt-get install -y \
+  git \
+  make \
+  build-essential \
+  clang \
+  llvm-dev \
+  libclang-dev \
+  tmux \
+  postfix \
+  mailutils
+
+
+### 3. Clone or Update Repo
+echo "[3/9] Cloning/updating Nockchain repo..."
+if [ ! -d "$PROJECT_DIR" ]; then
+  git clone --depth 1 "$REPO_URL" "$PROJECT_DIR"
+else
+  cd "$PROJECT_DIR"
+  git reset --hard HEAD
+  git pull origin master
+fi
+cd "$PROJECT_DIR"
+
+### 4. Setup wallet with existing keys
+echo "[4/9] Using existing keys..."
+
+PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
+PRIVKEY="5XujP153GmiGiQZHhzyRUrnQ7wkzRVcVcyhrnptgv1Cr"
+
+rm -rf "$WALLET_DIR"
+mkdir -p "$WALLET_DIR"
+
+# Save keys in wallet directory in a JSON format expected by wallet (adjust if needed)
+cat > "$WALLET_DIR/keys.json" <<EOF
+{
+  "pubkey": "$PUBKEY",
+  "privkey": "$PRIVKEY"
+}
+EOF
+
+echo "✅ Using Public Key: $PUBKEY"
+
+
+### 5. Write .env file
+echo "[5/9] Writing .env file..."
+cp -f "$PROJECT_DIR/.env_example" "$ENV_FILE"
+sed -i "s|^MINING_PUBKEY=.*|MINING_PUBKEY=$PUBKEY|" "$ENV_FILE"
+echo "MINING_PUBKEY=$PUBKEY"
+
+### 6. Patch Makefile if needed
+echo "[6/9] Ensuring pubkey is in Makefile..."
+if grep -q "^export MINING_PUBKEY" "$MAKEFILE"; then
+  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY := $PUBKEY|" "$MAKEFILE"
+else
+  echo "export MINING_PUBKEY := $PUBKEY" >> "$MAKEFILE"
+fi
+
+### 7. Build
+echo "[7/9] Building Nockchain..."
+cd "$PROJECT_DIR"
+make install-hoonc
+make build
+make install-nockchain
+make install-nockchain-wallet
+make install-nockchain-miner
+make install-nockchain-verifier
+
+### 8. Start Miner using `nockchain --mine` command
+echo "[8/8] Launching nockchain miner in tmux with your pubkey..."
+tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+tmux new-session -d -s "$TMUX_SESSION" "cd $PROJECT_DIR && ./target/release/nockchain --mine --mining-pubkey $PUBKEY | tee -a miner.log"
+
+# Wait a few seconds to ensure miner starts
+sleep 5
+
+# Check wallet balance
+BALANCE=$(./target/release/nockcli wallet balance)
+echo "Wallet Balance: $BALANCE"
+echo "Wallet Balance: $BALANCE" >> /var/log/nockchain.log
+
+# Optional: Email the balance
+echo -e "Nockchain Wallet Balance:\n$BALANCE" | mail -s "Nockchain Balance Update" itbronet@gmail.com
+
+echo ""
+echo "🎉 Setup complete!"
+echo "👉 To monitor miner: tmux attach -t $TMUX_SESSION"
+echo "👉 Public Key used: $PUBKEY"
