@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipe
+
 # --- Configuration ---
 REPO_URL="https://github.com/zorp-corp/nockchain"
 PROJECT_DIR="$HOME/nockchain"
