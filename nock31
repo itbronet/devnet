@@ -2,37 +2,36 @@
 
 set -euo pipefail
 
-# Configuration
+# --- Configuration ---
 REPO_URL="https://github.com/zorp-corp/nockchain"
 PROJECT_DIR="$HOME/nockchain"
-BINARY_PATH="$PROJECT_DIR/target/release/nockchaind"
 ASSET_DIR="$PROJECT_DIR/assets"
-LOG_FILE="$PROJECT_DIR/miner.log"
-PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
 TMUX_SESSION="nockminer"
+PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
+LOG_FILE="$PROJECT_DIR/miner.log"
 
-# Ensure Rust is installed
-if ! command -v cargo &> /dev/null; then
-  echo "[1/8] Installing Rust toolchain..."
+echo "[1/8] Installing Rust if missing..."
+if ! command -v cargo &>/dev/null; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   source "$HOME/.cargo/env"
 fi
 
-# Install system dependencies
-echo "[2/8] Installing system dependencies..."
+echo "[2/8] Installing system packages..."
 sudo apt-get update
-sudo apt-get install -y build-essential clang llvm-dev libclang-dev tmux git curl
+sudo apt-get install -y git make build-essential clang llvm-dev libclang-dev tmux
 
-# Clone the repository
-echo "[3/8] Cloning Nockchain repo..."
-rm -rf "$PROJECT_DIR"
-git clone "$REPO_URL" "$PROJECT_DIR"
+echo "[3/8] Cloning or updating Nockchain..."
+if [ ! -d "$PROJECT_DIR" ]; then
+  git clone "$REPO_URL" "$PROJECT_DIR"
+else
+  cd "$PROJECT_DIR"
+  git pull origin main
+fi
 
-# Create dummy .jam files if missing
 mkdir -p "$ASSET_DIR"
 
 echo "[4/8] Creating dummy .jam kernel files..."
-cat > "$ASSET_DIR/wal.jam" <<EOF
+cat > "$ASSET_DIR/wal.jam" << 'EOF'
 [+*  %wallet
   =$
   $coin  @ud
@@ -40,7 +39,7 @@ cat > "$ASSET_DIR/wal.jam" <<EOF
 ]
 EOF
 
-cat > "$ASSET_DIR/miner.jam" <<EOF
+cat > "$ASSET_DIR/miner.jam" << 'EOF'
 [+*  %miner
   =$
   $difficulty @ud
@@ -48,52 +47,47 @@ cat > "$ASSET_DIR/miner.jam" <<EOF
 ]
 EOF
 
-cat > "$ASSET_DIR/dumb.jam" <<EOF
+cat > "$ASSET_DIR/dumb.jam" << 'EOF'
 [+*  %dumb
   =$
   $id @ta
 ]
 EOF
 
-# Verify .jam files
-echo "[5/8] Verifying .jam kernel files..."
+echo "[5/8] Verifying required assets..."
 for f in wal.jam miner.jam dumb.jam; do
-  if [ ! -s "$ASSET_DIR/$f" ]; then
-    echo "❌ Missing or empty: $f"
+  if [ ! -f "$ASSET_DIR/$f" ]; then
+    echo "❌ Missing required asset: $f"
     exit 1
   fi
 done
-echo "✅ All .jam files are present."
 
-# Optional: auto-commit if this is your GitHub repo
-if [ "$(basename "$(git config --get remote.origin.url)" .git)" == "nockchain" ]; then
-  echo "[Optional] Committing kernel assets..."
-  cd "$PROJECT_DIR"
-  git config user.name "AutoCommit Bot"
-  git config user.email "auto@itbronet.com"
-  git add assets/*.jam
-  git commit -m "Auto-add kernel .jam files" || true
-  git push origin main || echo "⚠️ Push failed or skipped"
-fi
-
-# Build the project
-echo "[6/8] Building Nockchain..."
+echo "[6/8] Building project..."
 cd "$PROJECT_DIR"
 cargo build --release
 
-# Launch miner in tmux
-echo "[7/8] Starting miner in tmux session '$TMUX_SESSION'..."
-tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-tmux new-session -d -s "$TMUX_SESSION" "$BINARY_PATH --mine --mining-pubkey $PUBKEY | tee -a $LOG_FILE"
-
-# Optional: Check wallet balance
-if [ -f "$PROJECT_DIR/target/release/nockcli" ]; then
-  echo "[8/8] Checking wallet balance..."
-  BALANCE=$("$PROJECT_DIR/target/release/nockcli" wallet balance 2>/dev/null)
-  echo "Wallet Balance: $BALANCE"
-  echo "$(date): Wallet Balance: $BALANCE" >> "$LOG_FILE"
+if [ ! -f "$PROJECT_DIR/target/release/nockchain" ]; then
+    echo "❌ Error: nockchain binary not found after build."
+    exit 1
 fi
 
-echo "✅ Nockchain setup complete!"
-echo "🧿 Public Key: $PUBKEY"
-echo "📟 To monitor: tmux attach -t $TMUX_SESSION"
+if [ ! -f "$PROJECT_DIR/target/release/nockcli" ]; then
+    echo "❌ Error: nockcli binary not found after build."
+    exit 1
+fi
+
+echo "[7/8] Killing existing tmux session if any..."
+tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+
+echo "[8/8] Launching miner in tmux..."
+tmux new-session -d -s "$TMUX_SESSION" "cd $PROJECT_DIR && ./target/release/nockchain --mine --mining-pubkey $PUBKEY | tee -a $LOG_FILE"
+
+sleep 5
+
+BALANCE=$($PROJECT_DIR/target/release/nockcli wallet balance 2>/dev/null || echo "Unavailable")
+echo "Wallet Balance: $BALANCE"
+echo "$(date): Wallet Balance: $BALANCE" >> "$LOG_FILE"
+
+echo "🎉 Miner is running in tmux session '$TMUX_SESSION'"
+echo "👉 To attach: tmux attach -t $TMUX_SESSION"
+echo "👉 Public Key: $PUBKEY"
