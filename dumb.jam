@@ -1,7 +1,8 @@
-cd ~/path/to/devnet
-mkdir -p assets
-echo '[ %wallet [%version 1] [%keys [%pub "35TRFiY..."] [%priv ""]] [%balance 0] ]' > assets/wal.jam
-
-git add assets/wal.jam
-git commit -m "Add dummy wal.jam with realistic wallet structure"
-git push origin main
+[ %dumb
+  [%version 1]
+  [%core
+    [%noop
+      [%result "noop-done"]
+    ]
+  ]
+]
