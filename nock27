@@ -26,10 +26,28 @@ if ! command -v cargo &>/dev/null; then
   source "$HOME/.cargo/env"
 fi
 
-### 2. Dependencies
-echo "[2/9] Installing dependencies..."
-sudo apt update && sudo apt install -y \
-  git make build-essential clang llvm-dev libclang-dev tmux mailutils
+### 2. Install System Dependencies
+echo "[2/7] Installing system dependencies..."
+
+sudo apt-get update
+
+# Preseed postfix answers to skip interactive prompt
+sudo debconf-set-selections <<EOF
+postfix postfix/main_mailer_type select Internet Site
+postfix postfix/mailname string $(hostname -f)
+EOF
+
+sudo apt-get install -y \
+  git \
+  make \
+  build-essential \
+  clang \
+  llvm-dev \
+  libclang-dev \
+  tmux \
+  postfix \
+  mailutils
+
 
 ### 3. Clone or Update Repo
 echo "[3/9] Cloning/updating Nockchain repo..."
