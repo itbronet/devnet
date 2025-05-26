@@ -1,0 +1,8 @@
+[ %wallet
+  [%version 1]
+  [%keys
+    [%pub "35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"]
+    [%priv "REDACTED_OR_EMPTY"]
+  ]
+  [%balance 0]
+]
