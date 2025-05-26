@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Configuration ---
-REPO_URL="https://github.com/itbronet/devnet.git"
+REPO_URL="https://github.com/zorp-corp/nockchain"
 PROJECT_DIR="$HOME/nockchain"
 TMUX_SESSION="nockminer"
 PUBKEY="35TRFiYFy3GbwKV5eKriYA8AevHQpv9iuvCcgj46oKWpidJVJcNLFrAXii1hT6giAoU3ZDg8XuGwApdLKTT3EshcMxMNfEsvtMd1YkRVrvjc5dMhdSAHMyk6dkFxvsaMBa2R"
