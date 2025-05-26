@@ -35,7 +35,6 @@ sudo apt-get install -y \
   llvm-dev \
   libclang-dev \
   tmux \
-  postfix \
   
 # --- Clone or update repository ---
 if [ ! -d "$PROJECT_DIR" ]; then
