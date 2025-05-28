@@ -1,8 +1,9 @@
-[ %dumb
-  [%version 1]
-  [%core
-    [%noop
-      [%result "noop-done"]
-    ]
-  ]
-]
+/-  *core
+
+|=  state=map _ b
+=+  new-state
+  (merge state
+    [%status 'idle']
+  )
+^-  map _ b
+(new-state)
