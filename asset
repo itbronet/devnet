@@ -1,60 +1,53 @@
 #!/bin/bash
-
 set -euo pipefail
 
-# Config
-device="$(uname -m)"
-repo="zorp-corp/nockchain"
-binary_name="nockchaind"
-binary_path="$HOME/.local/bin/$binary_name"
-data_dir="$HOME/.nock"
-assets_dir="$data_dir/assets"
+ASSET_DIR="assets"
+mkdir -p "$ASSET_DIR"
 
-# Create required directories
-mkdir -p "$HOME/.local/bin"
-mkdir -p "$assets_dir"
-export PATH="$HOME/.local/bin:$PATH"
+cat > "$ASSET_DIR/wal.jam" <<'EOF'
+/-  *core
 
-# Detect architecture
-arch="$(uname -m)"
-case "$arch" in
-    x86_64) arch="amd64" ;;
-    aarch64) arch="arm64" ;;
-    *) echo "Unsupported architecture: $arch"; exit 1 ;;
-esac
-
-# Download the binary
-download_url="https://github.com/$repo/releases/latest/download/$binary_name-linux-$arch"
-echo "Downloading $binary_name from $download_url..."
-curl -L "$download_url" -o "$binary_path"
-chmod +x "$binary_path"
-
-# Validate it's a real executable
-if ! file "$binary_path" | grep -q "ELF"; then
-  echo "❌ Downloaded file is not a valid Linux binary."
-  cat "$binary_path" | head -n 10
-  exit 1
-fi
-
-echo "$binary_name has been installed to $binary_path"
-
-# Generate dummy .jam files
-for file in wal.jam miner.jam dumb.jam; do
-    path="$assets_dir/$file"
-    if [ ! -f "$path" ]; then
-        echo "Creating dummy $file..."
-        cat <<EOF > "$path"
-::  %$file
-:-  %noun  ~
-==  [%ok %dummy]
+|=  [state=map _ b]
+=+  new-state
+  (merge state
+    [%balance (add (get %balance state 0) b)]
+  )
+^-  map _ b
+(new-state)
 EOF
-    fi
+
+cat > "$ASSET_DIR/miner.jam" <<'EOF'
+/-  *core
+
+|=  state=map _ b
+=+  new-state
+  (merge state
+    [%mining true]
+  )
+^-  map _ b
+(new-state)
+EOF
+
+cat > "$ASSET_DIR/dumb.jam" <<'EOF'
+/-  *core
+
+|=  state=map _ b
+=+  new-state
+  (merge state
+    [%status 'idle']
+  )
+^-  map _ b
+(new-state)
+EOF
+
+echo "Created .jam files."
+
+# Basic validation: check files exist and non-empty
+for file in wal.jam miner.jam dumb.jam; do
+  if [[ ! -s "$ASSET_DIR/$file" ]]; then
+    echo "Error: $file is empty or missing."
+    exit 1
+  fi
 done
 
-# Init the node
-echo "Initializing $binary_name..."
-"$binary_name" init
-
-# Optional: Start the node
-# echo "Starting $binary_name..."
-# exec "$binary_name" start
+echo "Validation passed: .jam files are present and non-empty."
