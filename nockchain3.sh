@@ -1,131 +1,111 @@
 #!/bin/bash
+
 set -euo pipefail
 
-LOG_FILE="/var/log/nockchain_install.log"
-ASSET_DIR="/root/assets"
-REPO_URL="https://github.com/zorp-corp/nockchain.git"
-REPO_DIR="/root/nockchain"
+# Constants
+ROOT_DIR="/root/nockchain"
+ASSET_DIR="$ROOT_DIR/assets"
+LOG_FILE="$ROOT_DIR/miner.log"
 EMAIL="itbronet@gmail.com"
-SESSION_NAME="nockminer"
-CRON_TAG="# Nockchain Auto-Restart"
+GIT_REPO="https://github.com/zorp-corp/nockchain.git"
+MINER_SESSION="nockminer"
 
 log() {
-    echo "[✔] $1" | tee -a "$LOG_FILE"
+  echo "[✔] $1"
 }
 
-error_exit() {
-    echo "[✘] $1" | tee -a "$LOG_FILE"
-    exit 1
+err() {
+  echo "[✘] $1" >&2
+  echo "$1" | mail -s "Nockchain Setup Failed" "$EMAIL" || true
+  exit 1
 }
 
-install_dependencies() {
-    log "Installing dependencies..."
-    apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get install -y curl git tmux postfix mailutils build-essential pkg-config libssl-dev clang cmake || error_exit "Failed to install dependencies"
-    echo "postfix postfix/mailname string localhost" | debconf-set-selections
-    echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
-    dpkg-reconfigure -f noninteractive postfix || log "Postfix may have been already configured"
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
 }
 
-setup_rust() {
-    log "Setting up Rust..."
-    if ! command -v rustc &>/dev/null; then
-        curl https://sh.rustup.rs -sSf | sh -s -- -y
-        source "$HOME/.cargo/env"
-    fi
-    rustup update
+install_prereqs() {
+  log "Installing prerequisites..."
+  apt-get update -y
+  apt-get install -y build-essential curl git tmux mailutils postfix pkg-config libssl-dev || err "Failed to install dependencies"
+  if ! command_exists rustup; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  fi
+  export PATH="$HOME/.cargo/bin:$PATH"
 }
 
-clone_or_update_repo() {
-    log "Cloning or updating Nockchain repo..."
-    if [ -d "$REPO_DIR" ]; then
-        cd "$REPO_DIR" && git pull origin master
-    else
-        git clone "$REPO_URL" "$REPO_DIR"
-    fi
+clone_repo() {
+  log "Cloning or updating nockchain repo..."
+  mkdir -p "$ROOT_DIR"
+  cd "$ROOT_DIR"
+  if [ -d ".git" ]; then
+    git pull || err "Failed to update repository"
+  else
+    git clone "$GIT_REPO" . || err "Git clone failed"
+  fi
 }
 
 create_assets() {
-    log "Ensuring .jam assets exist..."
-    mkdir -p "$ASSET_DIR"
-    for file in wal.jam miner.jam dumb.jam; do
-        path="$ASSET_DIR/$file"
-        if [ ! -f "$path" ]; then
-            echo "0" > "$path"
-            log "Created $file with dummy content"
-        fi
-    done
-    ln -sf "$ASSET_DIR" "$REPO_DIR/assets"
+  log "Creating assets directory and .jam files..."
+  mkdir -p "$ASSET_DIR"
+  for file in wal.jam miner.jam dumb.jam; do
+    # If file does not exist or is empty, create a placeholder
+    if [ ! -s "$ASSET_DIR/$file" ]; then
+      echo "// placeholder $file" > "$ASSET_DIR/$file"
+      log "Created placeholder $file"
+    else
+      log "$file exists"
+    fi
+  done
 }
 
 build_nockchain() {
-    log "Building Nockchain..."
-    cd "$REPO_DIR"
-    cargo build --release || error_exit "Build failed"
-    cargo check --release || error_exit "Build check failed"
-    ./target/release/nockchain --help > /dev/null || error_exit "Binary did not run correctly"
+  log "Building nockchain (release)..."
+  export PATH="$HOME/.cargo/bin:$PATH"
+  cd "$ROOT_DIR"
+  cargo clean
+  cargo build --release || err "Build failed"
 }
 
 launch_miner_tmux() {
-    log "Launching miner in tmux..."
-    cd "$REPO_DIR"
-    tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
-    tmux new-session -d -s "$SESSION_NAME" "./target/release/nockchain > miner.log 2>&1"
-    sleep 5
-    if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        error_exit "Failed to start miner in tmux"
-    fi
+  log "Killing existing miner sessions and launching a new one..."
+  pkill -f nockchain || true
+  tmux kill-session -t "$MINER_SESSION" || true
+  cd "$ROOT_DIR"
+  # Clear old log before starting
+  : > "$LOG_FILE"
+  tmux new-session -d -s "$MINER_SESSION" "cargo run --bin nockchain --release > $LOG_FILE 2>&1"
+  sleep 10
 }
 
-setup_alerts() {
-    log "Setting up block mining alerts..."
-    alert_script="/root/nockchain/block-alert.sh"
-    cat <<EOF > "$alert_script"
-#!/bin/bash
-tail -Fn0 /root/nockchain/miner.log | \\
-grep --line-buffered "block by-height" | \\
-while read -r line; do
-    echo "New block mined: \$line" | mail -s "Nockchain Mined a Block" "$EMAIL"
-done
-EOF
-    chmod +x "$alert_script"
-    tmux kill-session -t alertmon 2>/dev/null || true
-    tmux new-session -d -s alertmon "bash $alert_script"
+test_mining_log() {
+  log "Testing mining activity in log..."
+  # Give some time for miner to produce output
+  sleep 20
+  if grep -q "block by-height" "$LOG_FILE"; then
+    log "Mining is working properly!"
+    echo "Nockchain mining started successfully" | mail -s "Nockchain Mining Started" "$EMAIL"
+  else
+    err "No mining activity detected in log after startup."
+  fi
 }
 
 setup_cron_reboot() {
-    log "Adding cron for auto-restart after reboot..."
-    crontab -l | grep -v "$CRON_TAG" > /tmp/crontab.new || true
-    echo "@reboot bash $REPO_DIR/nockchain.sh $CRON_TAG" >> /tmp/crontab.new
-    crontab /tmp/crontab.new && rm /tmp/crontab.new
-}
-
-final_test() {
-    log "Performing final validation..."
-    if ! ps aux | grep "[n]ockchain" > /dev/null; then
-        error_exit "Nockchain miner not running"
-    fi
-
-    if [ ! -s "$REPO_DIR/miner.log" ]; then
-        error_exit "Miner log not being generated"
-    fi
-
-    grep -q "block by-height" "$REPO_DIR/miner.log" && \
-    log "Miner already mined at least one block!" || \
-    log "Miner running. Awaiting block..."
+  log "Setting up cron job to auto-start miner on reboot..."
+  # Append only if not already present
+  (crontab -l 2>/dev/null | grep -v "$ROOT_DIR/nockchain.sh" || true; echo "@reboot bash $ROOT_DIR/nockchain.sh") | sort -u | crontab -
 }
 
 main() {
-    install_dependencies
-    setup_rust
-    clone_or_update_repo
-    create_assets
-    build_nockchain
-    launch_miner_tmux
-    setup_alerts
-    setup_cron_reboot
-    final_test
-    log "Nockchain miner setup complete and validated ✅"
+  log "Starting Nockchain setup..."
+  install_prereqs
+  clone_repo
+  create_assets
+  build_nockchain
+  launch_miner_tmux
+  test_mining_log
+  setup_cron_reboot
+  log "Nockchain setup completed successfully."
 }
 
 main
