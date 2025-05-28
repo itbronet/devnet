@@ -1,9 +1,9 @@
-[ %miner
-  [%version 1]
-  [%core
-    [%mine-fn
-      [%sample ~]
-      [%result [%ok "dummy-block-mined"]]
-    ]
-  ]
-]
+/-  *core
+
+|=  state=map _ b
+=+  new-state
+  (merge state
+    [%mining true]
+  )
+^-  map _ b
+(new-state)
