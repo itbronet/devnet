@@ -144,7 +144,7 @@ for port in "${REQUIRED_PORTS[@]}"; do
     err "Port $port is in use. Check conflicts!"
   fi
   
-### 8. Start Miner using CLI pubkey
+### 15. Start Miner using CLI pubkey
 echo "[8/8] Launching miner in tmux with your pubkey..."
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$TMUX_SESSION" "cd $PROJECT_DIR && nockchain --mining-pubkey $PUBKEY --mine | tee -a miner.log"
