@@ -12,23 +12,18 @@ WALLET_FILE="$REPO_DIR/wallet_keys.txt"
 MINER_BIN="$REPO_DIR/target/release/nockchain"
 
 # Colors
-log() { echo -e "\033[1;32m[✔]\033[0m $1"; }
-err() { echo -e "\033[1;31m[✘]\033[0m $1" >&2; }
+log() { echo -e "\033[1;32m[\u2714]\033[0m $1"; }
+err() { echo -e "\033[1;31m[\u2718]\033[0m $1" >&2; }
 
-# Ask screen or tmux
-read -rp "Use tmux or screen to run miner? [tmux/screen]: " SESSION_TYPE
-SESSION_TYPE="${SESSION_TYPE:-tmux}"
-if [[ "$SESSION_TYPE" != "tmux" && "$SESSION_TYPE" != "screen" ]]; then
-  err "Invalid choice. Use 'tmux' or 'screen'."
-  exit 1
-fi
+# Choose terminal multiplexer
+SESSION_TYPE="tmux"
 
 # Install dependencies
 log "Installing dependencies..."
 sudo apt update
-sudo apt install -y git curl make tmux screen build-essential clang llvm-dev libclang-dev tree pkg-config libssl-dev
+sudo apt install -y git curl make tmux screen build-essential clang llvm-dev libclang-dev tree
 
-# Install Rust if missing
+# Install Rust if not present
 if ! command -v cargo >/dev/null 2>&1; then
   log "Installing Rust toolchain..."
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -47,63 +42,60 @@ fi
 
 cd "$REPO_DIR"
 
-# Ensure asset kernel files
-log "Ensuring asset kernel files..."
+# Generate kernel assets
+log "Creating kernel asset files..."
 mkdir -p "$ASSETS_DIR"
 echo '(+ [1 2 3 4])' > "$ASSETS_DIR/wal.jam"
 echo '(add 1 2)' > "$ASSETS_DIR/miner.jam"
 echo '(mul 3 7)' > "$ASSETS_DIR/dumb.jam"
 
-# Generate wallet key if not exists
+# Build the project
+log "Patching form.rs for debugging..."
+FORM_FILE="crates/nockapp/src/kernel/form.rs"
+sed -i '/panic!("Kernel setup failed: oneshot channel error");/i \
+use std::time::{SystemTime, UNIX_EPOCH};\nuse log::{error, info};\nlet now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();\nerror!("[DEBUG] Kernel send error at time: {now}");\n' "$FORM_FILE"
+
+log "Compiling Nockchain..."
+cargo clean
+cargo build --release
+
+# Generate wallet key
 if [ ! -f "$WALLET_FILE" ]; then
-  log "Generating new wallet key..."
-  cargo build --release
+  log "Generating wallet key..."
   ./target/release/nockchain-wallet keygen > "$WALLET_FILE"
 fi
 
-# Extract public key
+# Extract pubkey
 PUBKEY=$(grep -oP '"pubkey":\s*"\K[^"]+' "$WALLET_FILE")
 log "Using pubkey: $PUBKEY"
 
-# Create .env file
+# Generate .env
 log "Creating .env..."
 cat > "$ENV_FILE" <<EOF
-RUST_LOG=info,nockchain=info,nockchain_libp2p_io=info,libp2p=info,libp2p_quic=info
+RUST_LOG=debug,nockchain=debug,nockchain_libp2p_io=debug,libp2p=info
 MINIMAL_LOG_FORMAT=true
 MINING_PUBKEY=$PUBKEY
 EOF
 
 # Patch Makefile
-log "Patching Makefile..."
-if grep -q "^export MINING_PUBKEY" "$MAKEFILE"; then
-  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY ?= $PUBKEY|" "$MAKEFILE"
-else
+log "Patching Makefile with pubkey..."
+grep -q "^export MINING_PUBKEY" "$MAKEFILE" && \
+  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY ?= $PUBKEY|" "$MAKEFILE" || \
   echo "export MINING_PUBKEY ?= $PUBKEY" >> "$MAKEFILE"
-fi
 
-# Build project
-log "Building Nockchain..."
-make install-hoonc
-make build
-make install-nockchain
-make install-nockchain-wallet
-make install-nockchain-miner
-make install-nockchain-verifier
-
-# Check ports
+# Check required ports
 REQUIRED_PORTS=(3000 3001 3002 3003 3004 3005 3006)
-log "Checking required ports..."
+log "Checking ports..."
 for port in "${REQUIRED_PORTS[@]}"; do
   if ss -lntup | grep -q ":$port"; then
-    err "Port $port is in use!"
+    err "Port $port is already in use."
     exit 1
-  else
-    log "Port $port is available."
   fi
+  log "Port $port is free."
 done
 
 # Launch miner
-log "Launching Nockchain Miner with $SESSION_TYPE..."
+log "Launching miner using $SESSION_TYPE..."
 CMD="$MINER_BIN --mine --mining-pubkey $PUBKEY \
 --peer /ip4/34.95.155.151/udp/3000/quic-v1 \
 --peer /ip4/34.18.98.38/udp/3000/quic-v1 \
@@ -119,15 +111,12 @@ CMD="$MINER_BIN --mine --mining-pubkey $PUBKEY \
 --peer /ip4/217.14.223.78/udp/3003/quic-v1 | tee -a miner.log"
 
 if [ "$SESSION_TYPE" = "tmux" ]; then
-  if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION_NAME" "cd $REPO_DIR && $CMD"
-  fi
+  tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+  tmux new-session -d -s "$SESSION_NAME" "cd $REPO_DIR && $CMD"
 else
-  if ! screen -list | grep -q "$SESSION_NAME"; then
-    screen -S "$SESSION_NAME" -dm bash -c "cd $REPO_DIR && $CMD"
-  fi
+  screen -S "$SESSION_NAME" -dm bash -c "cd $REPO_DIR && $CMD"
 fi
 
-log "✅ Nockchain miner is running in $SESSION_TYPE session '$SESSION_NAME'"
-echo "   Attach with:  $SESSION_TYPE attach -t $SESSION_NAME"
-echo "   PubKey: $PUBKEY"
+log "\u2705 Miner launched in $SESSION_TYPE session '$SESSION_NAME'"
+echo "Attach with:  $SESSION_TYPE attach -t $SESSION_NAME"
+echo "Public Key: $PUBKEY"
