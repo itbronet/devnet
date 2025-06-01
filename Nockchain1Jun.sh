@@ -1,105 +1,131 @@
 #!/bin/bash
 set -euo pipefail
 
-### CONFIG
-REPO_URL="https://github.com/zorp-corp/nockchain"
-PROJECT_DIR="$HOME/nockchain"
-ASSETS_DIR="/root/assets"
-BIN_DIR="$PROJECT_DIR/target/release"
-ENV_FILE="$PROJECT_DIR/.env"
-MAKEFILE="$PROJECT_DIR/Makefile"
-TMUX_SESSION="nock-miner"
+# Configuration
+REPO_URL="https://github.com/zorp-corp/nockchain.git"
+REPO_DIR="$HOME/nockchain"
+ASSETS_DIR="$REPO_DIR/assets"
+ENV_FILE="$REPO_DIR/.env"
+MAKEFILE="$REPO_DIR/Makefile"
+SESSION_NAME="nock-miner"
+WALLET_FILE="$REPO_DIR/wallet_keys.txt"
+MINER_BIN="$REPO_DIR/target/release/nockchain"
 
-echo ""
-echo "[+] Nockchain MainNet Bootstrap Starting..."
-echo "-------------------------------------------"
+# Colors
+log() { echo -e "\033[1;32m[✔]\033[0m $1"; }
+err() { echo -e "\033[1;31m[✘]\033[0m $1" >&2; }
 
-### 1. Install Rust Toolchain
-echo "[1/8] Installing Rust toolchain..."
-if ! command -v cargo &>/dev/null; then
+# Ask screen or tmux
+read -rp "Use tmux or screen to run miner? [tmux/screen]: " SESSION_TYPE
+SESSION_TYPE="${SESSION_TYPE:-tmux}"
+if [[ "$SESSION_TYPE" != "tmux" && "$SESSION_TYPE" != "screen" ]]; then
+  err "Invalid choice. Use 'tmux' or 'screen'."
+  exit 1
+fi
+
+# Install dependencies
+log "Installing dependencies..."
+sudo apt update
+sudo apt install -y git curl make tmux screen build-essential clang llvm-dev libclang-dev tree
+
+if ! command -v cargo >/dev/null 2>&1; then
+  log "Installing Rust toolchain..."
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  export PATH="$HOME/.cargo/bin:$PATH"
+  source "$HOME/.cargo/env"
 fi
 
-### 2. Install System Dependencies
-echo "[2/8] Installing system dependencies..."
-sudo apt update && sudo apt install -y \
-  git \
-  make \
-  build-essential \
-  clang \
-  llvm-dev \
-  libclang-dev \
-  tmux \
-  jq
-
-### 3. Clone or Update Repo
-echo "[3/8] Cloning or updating Nockchain repo..."
-if [ ! -d "$PROJECT_DIR" ]; then
-  git clone --depth 1 --branch master "$REPO_URL" "$PROJECT_DIR"
+# Clone or update the repo
+if [ -d "$REPO_DIR/.git" ]; then
+  log "Updating existing Nockchain repo..."
+  git -C "$REPO_DIR" reset --hard HEAD
+  git -C "$REPO_DIR" pull origin master
 else
-  cd "$PROJECT_DIR"
-  git reset --hard HEAD && git pull origin master
+  log "Cloning Nockchain repo..."
+  git clone --depth 1 --branch master "$REPO_URL" "$REPO_DIR"
 fi
 
-cd "$PROJECT_DIR"
+cd "$REPO_DIR"
 
-### 4. Create .env early to satisfy Makefile
-echo "[4/8] Creating .env to satisfy Makefile..."
-cp -f .env_example .env
-touch "$ENV_FILE"
+# Generate kernel files
+log "Ensuring asset kernel files..."
+mkdir -p "$ASSETS_DIR"
+echo '(+ [1 2 3 4])' > "$ASSETS_DIR/wal.jam"
+echo '(add 1 2)' > "$ASSETS_DIR/miner.jam"
+echo '(mul 3 7)' > "$ASSETS_DIR/dumb.jam"
 
-### 5. Build Nockchain
-echo "[5/8] Building Nockchain..."
+# Build the project
+log "Building Nockchain..."
 make install-hoonc
 make build
 make install-nockchain
 make install-nockchain-wallet
+make install-nockchain-miner
+make install-nockchain-verifier
 
-### 6. Generate key and asset files
-echo "[6/8] Generating new key and asset files..."
-mkdir -p "$ASSETS_DIR"
-
-$BIN_DIR/nock keygen > "$ASSETS_DIR/key.jam" || { echo "❌ Failed to generate key"; exit 1; }
-$BIN_DIR/nock wal "$ASSETS_DIR/key.jam" > "$ASSETS_DIR/wal.jam" || { echo "❌ Failed to generate wal.jam"; exit 1; }
-$BIN_DIR/nock miner "$ASSETS_DIR/key.jam" > "$ASSETS_DIR/miner.jam" || { echo "❌ Failed to generate miner.jam"; exit 1; }
-$BIN_DIR/nock dumb "$ASSETS_DIR/key.jam" > "$ASSETS_DIR/dumb.jam" || { echo "❌ Failed to generate dumb.jam"; exit 1; }
-
-# Extract pubkey using jq (safe and clean)
-PUBKEY=$(jq -r '.pubkey' < "$ASSETS_DIR/wal.jam")
-if [[ -z "$PUBKEY" || "$PUBKEY" == "null" ]]; then
-  echo "❌ Failed to extract pubkey from wal.jam"
-  exit 1
+# Generate wallet key if not exist
+if [ ! -f "$WALLET_FILE" ]; then
+  log "Generating new wallet key..."
+  ./target/release/nockchain-wallet keygen > "$WALLET_FILE"
 fi
 
-echo "✅ Key and asset files created in $ASSETS_DIR"
-echo "   ➤ PUBKEY: $PUBKEY"
+# Extract public key
+PUBKEY=$(grep -oP '"pubkey":\s*"\K[^"]+' "$WALLET_FILE")
+log "Using pubkey: $PUBKEY"
 
-### 7. Set pubkey in .env
-echo "[7/8] Setting pubkey in .env..."
-sed -i "s|^MINING_PUBKEY=.*|MINING_PUBKEY=$PUBKEY|" "$ENV_FILE"
-grep "MINING_PUBKEY" "$ENV_FILE"
+# Update .env
+log "Updating .env..."
+cat > "$ENV_FILE" <<EOF
+RUST_LOG=info,nockchain=info,nockchain_libp2p_io=info,libp2p=info,libp2p_quic=info
+MINIMAL_LOG_FORMAT=true
+MINING_PUBKEY=$PUBKEY
+EOF
 
-### 8. Update Makefile pubkey
-echo "[8/8] Updating Makefile pubkey..."
+# Patch Makefile
+log "Patching Makefile..."
 if grep -q "^export MINING_PUBKEY" "$MAKEFILE"; then
-  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY := $PUBKEY|" "$MAKEFILE"
+  sed -i "s|^export MINING_PUBKEY.*|export MINING_PUBKEY ?= $PUBKEY|" "$MAKEFILE"
 else
-  echo "export MINING_PUBKEY := $PUBKEY" >> "$MAKEFILE"
+  echo "export MINING_PUBKEY ?= $PUBKEY" >> "$MAKEFILE"
 fi
-grep "MINING_PUBKEY" "$MAKEFILE"
 
-### 9. Clean old node data (if any)
-echo "[*] Cleaning previous Nockchain data..."
-rm -rf "$PROJECT_DIR/.data.nockchain"
+# Ports to check
+REQUIRED_PORTS=(3000 3001 3002 3003 3004 3005 3006)
+log "Checking required ports..."
+for port in "${REQUIRED_PORTS[@]}"; do
+  if ss -lntup | grep -q ":$port"; then
+    err "Port $port is in use!"
+    exit 1
+  else
+    log "Port $port is available."
+  fi
+done
 
-### 10. Launch miner in tmux
-echo "[*] Launching Nockchain miner in tmux..."
-tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-tmux new-session -d -s "$TMUX_SESSION" "cd $PROJECT_DIR && $BIN_DIR/nockchain --mining-pubkey $PUBKEY --mine | tee -a miner.log"
+# Start miner
+log "Launching Nockchain Miner with $SESSION_TYPE..."
+CMD="$MINER_BIN --mine --mining-pubkey $PUBKEY \
+--peer /ip4/34.95.155.151/udp/3000/quic-v1 \
+--peer /ip4/34.18.98.38/udp/3000/quic-v1 \
+--peer /ip4/34.174.22.166/udp/3001/quic-v1 \
+--peer /ip4/65.109.156.172/udp/3002/quic-v1 \
+--peer /ip4/65.21.67.175/udp/3003/quic-v1 \
+--peer /ip4/65.109.156.108/udp/3004/quic-v1 \
+--peer /ip4/65.108.123.225/udp/3005/quic-v1 \
+--peer /ip4/95.216.102.60/udp/3006/quic-v1 \
+--peer /ip4/96.230.252.205/udp/3006/quic-v1 \
+--peer /ip4/94.205.40.29/udp/3005/quic-v1 \
+--peer /ip4/159.112.204.186/udp/3004/quic-v1 \
+--peer /ip4/217.14.223.78/udp/3003/quic-v1 | tee -a miner.log"
 
-echo ""
-echo "✅ Nockchain MainNet Miner launched successfully!"
-echo "   ➤ To view logs: tmux attach -t $TMUX_SESSION"
-echo "   ➤ Wallet pubkey: $PUBKEY"
-echo ""
+if [ "$SESSION_TYPE" = "tmux" ]; then
+  if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    tmux new-session -d -s "$SESSION_NAME" "cd $REPO_DIR && $CMD"
+  fi
+else
+  if ! screen -list | grep -q "$SESSION_NAME"; then
+    screen -S "$SESSION_NAME" -dm bash -c "cd $REPO_DIR && $CMD"
+  fi
+fi
+
+log "✅ Nockchain miner is running in $SESSION_TYPE session '$SESSION_NAME'"
+echo "   Attach with:  $SESSION_TYPE attach -t $SESSION_NAME"
+echo "   PubKey: $PUBKEY"
