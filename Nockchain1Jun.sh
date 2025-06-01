@@ -26,15 +26,16 @@ fi
 # Install dependencies
 log "Installing dependencies..."
 sudo apt update
-sudo apt install -y git curl make tmux screen build-essential clang llvm-dev libclang-dev tree
+sudo apt install -y git curl make tmux screen build-essential clang llvm-dev libclang-dev tree pkg-config libssl-dev
 
+# Install Rust if missing
 if ! command -v cargo >/dev/null 2>&1; then
   log "Installing Rust toolchain..."
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   source "$HOME/.cargo/env"
 fi
 
-# Clone or update the repo
+# Clone or update repo
 if [ -d "$REPO_DIR/.git" ]; then
   log "Updating existing Nockchain repo..."
   git -C "$REPO_DIR" reset --hard HEAD
@@ -46,25 +47,17 @@ fi
 
 cd "$REPO_DIR"
 
-# Generate kernel files
+# Ensure asset kernel files
 log "Ensuring asset kernel files..."
 mkdir -p "$ASSETS_DIR"
 echo '(+ [1 2 3 4])' > "$ASSETS_DIR/wal.jam"
 echo '(add 1 2)' > "$ASSETS_DIR/miner.jam"
 echo '(mul 3 7)' > "$ASSETS_DIR/dumb.jam"
 
-# Build the project
-log "Building Nockchain..."
-make install-hoonc
-make build
-make install-nockchain
-make install-nockchain-wallet
-make install-nockchain-miner
-make install-nockchain-verifier
-
-# Generate wallet key if not exist
+# Generate wallet key if not exists
 if [ ! -f "$WALLET_FILE" ]; then
   log "Generating new wallet key..."
+  cargo build --release
   ./target/release/nockchain-wallet keygen > "$WALLET_FILE"
 fi
 
@@ -72,8 +65,8 @@ fi
 PUBKEY=$(grep -oP '"pubkey":\s*"\K[^"]+' "$WALLET_FILE")
 log "Using pubkey: $PUBKEY"
 
-# Update .env
-log "Updating .env..."
+# Create .env file
+log "Creating .env..."
 cat > "$ENV_FILE" <<EOF
 RUST_LOG=info,nockchain=info,nockchain_libp2p_io=info,libp2p=info,libp2p_quic=info
 MINIMAL_LOG_FORMAT=true
@@ -88,7 +81,16 @@ else
   echo "export MINING_PUBKEY ?= $PUBKEY" >> "$MAKEFILE"
 fi
 
-# Ports to check
+# Build project
+log "Building Nockchain..."
+make install-hoonc
+make build
+make install-nockchain
+make install-nockchain-wallet
+make install-nockchain-miner
+make install-nockchain-verifier
+
+# Check ports
 REQUIRED_PORTS=(3000 3001 3002 3003 3004 3005 3006)
 log "Checking required ports..."
 for port in "${REQUIRED_PORTS[@]}"; do
@@ -100,7 +102,7 @@ for port in "${REQUIRED_PORTS[@]}"; do
   fi
 done
 
-# Start miner
+# Launch miner
 log "Launching Nockchain Miner with $SESSION_TYPE..."
 CMD="$MINER_BIN --mine --mining-pubkey $PUBKEY \
 --peer /ip4/34.95.155.151/udp/3000/quic-v1 \
